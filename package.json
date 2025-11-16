@@ -12,14 +12,20 @@
     "example:image": "node client/examples/send-image.js",
     "example:pairing": "node client/examples/pairing-code.js"
   },
-  "keywords": ["whatsapp", "baileys", "websocket", "api"],
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "websocket",
+    "api"
+  ],
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.8",
     "@hapi/boom": "^10.0.1",
     "ws": "^8.18.0",
     "qrcode-terminal": "^0.12.0",
     "pino": "^8.19.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
