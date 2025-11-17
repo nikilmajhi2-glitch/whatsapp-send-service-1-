@@ -1,34 +1,44 @@
 {
   "name": "whatsapp-send-service",
   "version": "1.0.0",
-  "description": "WhatsApp Send Service with Firebase Integration",
+  "description": "WhatsApp Send Service with Firebase Integration and Custom Pairing Code",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "pairing": "node server.js --pairing-code",
+    "pairing-custom": "node server.js --pairing-code --phone 919668154832 --custom-code 44444444",
+    "clean": "rm -rf auth_info_baileys",
+    "fresh-start": "npm run clean && node server.js --pairing-code",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "whatsapp",
     "baileys",
     "websocket",
-    "firebase"
+    "firebase",
+    "pairing-code",
+    "custom-code"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@hapi/boom": "^10.0.0",
-    "@whiskeysockets/baileys": "^6.7.21",
+    "baileys": "github:nstar-y/bail",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "firebase-admin": "^12.7.0",
     "pino": "^8.21.0",
     "pino-pretty": "^10.3.1",
+    "qrcode": "^1.5.3",
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   }
 }

@@ -4,7 +4,7 @@ const {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion
-} = require('@itsukichan/baileys');
+} = require('baileys');
 
 const { Boom } = require('@hapi/boom');
 const config = require('../config/config');
@@ -41,35 +41,29 @@ class WhatsAppService {
       
       this.setupEventHandlers(saveCreds);
       
-      // Wait for connection then request pairing code
-      if (config.whatsapp.usePairingCode && config.whatsapp.phoneNumber) {
-        if (!state.creds.registered) {
-          logger.info('⏳ Waiting for connection to request pairing code...');
-          
-          // Wait for the connection to be established
-          await new Promise((resolve) => {
-            const checkConnection = setInterval(() => {
-              if (this.sock.ws && this.sock.ws.readyState === 1) {
-                clearInterval(checkConnection);
-                resolve();
-              }
-            }, 100);
-            
-            // Timeout after 10 seconds
-            setTimeout(() => {
-              clearInterval(checkConnection);
-              resolve();
-            }, 10000);
-          });
-          
-          // Small delay to ensure handshake is complete
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          logger.info('✅ Connection established, requesting pairing code...');
-          await this.requestPairingCode(config.whatsapp.phoneNumber);
-        } else {
-          logger.info('Already registered, skipping pairing code request');
-        }
+      // Request custom pairing code if configured
+      if (
+        config.whatsapp.usePairingCode &&
+        config.whatsapp.phoneNumber &&
+        !state.creds.registered
+      ) {
+        logger.info('⏳ Waiting for connection to request custom pairing code...');
+        
+        // Wait for connection
+        await this.waitForConnection();
+        
+        logger.info('✅ Connection ready, requesting custom pairing code...');
+        
+        setTimeout(async () => {
+          try {
+            await this.requestCustomPairingCode(
+              config.whatsapp.phoneNumber,
+              config.whatsapp.customPairingCode || '44444444'
+            );
+          } catch (err) {
+            logger.error('Failed to request pairing code:', err);
+          }
+        }, 2000);
       }
       
       logger.info('WhatsApp service initialized');
@@ -79,13 +73,30 @@ class WhatsAppService {
     }
   }
   
+  async waitForConnection(timeout = 15000) {
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+      const checkInterval = setInterval(() => {
+        if (this.sock && this.sock.ws && this.sock.ws.readyState === 1) {
+          clearInterval(checkInterval);
+          logger.info('WebSocket connection established');
+          resolve();
+        } else if (Date.now() - startTime > timeout) {
+          clearInterval(checkInterval);
+          logger.warn('Timeout waiting for connection');
+          resolve();
+        }
+      }, 200);
+    });
+  }
+  
   setupEventHandlers(saveCreds) {
     this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
       
       // Suppress QR if using pairing code
       if (qr && config.whatsapp.usePairingCode) {
-        logger.debug('QR code suppressed (using pairing code mode)');
+        logger.debug('QR code suppressed (using custom pairing code)');
         return;
       }
       
@@ -108,7 +119,6 @@ class WhatsAppService {
         } else {
           logger.error('❌ Connection failed permanently');
           console.log('\n⚠️  Delete auth_info_baileys folder and try again\n');
-          console.log('Run: rm -rf auth_info_baileys\n');
         }
       }
       else if (connection === 'open') {
@@ -142,7 +152,12 @@ class WhatsAppService {
     });
   }
   
-  async requestPairingCode(phoneNumber) {
+  /**
+   * Request a CUSTOM pairing code (8-digit alphanumeric)
+   * @param {string} phoneNumber - Phone number with country code (e.g., 919668154832)
+   * @param {string} customCode - Your custom 8-digit code (e.g., "44444444")
+   */
+  async requestCustomPairingCode(phoneNumber, customCode = '44444444') {
     try {
       if (!phoneNumber) {
         throw new Error('Phone number is required');
@@ -153,46 +168,63 @@ class WhatsAppService {
       }
       
       if (this.pairingCodeRequested) {
-        logger.warn('Pairing code already requested, skipping...');
+        logger.warn('Pairing code already requested');
         return;
       }
       
-      // Clean phone number
+      // Clean phone number (remove +, spaces, dashes)
       const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
       
-      logger.info(`📱 Requesting pairing code for: ${cleanNumber}`);
+      // Validate custom code (must be 8 characters alphanumeric)
+      if (!/^[A-Z0-9]{8}$/i.test(customCode)) {
+        throw new Error('Custom code must be 8 alphanumeric characters');
+      }
       
-      // Request pairing code
-      const code = await this.sock.requestPairingCode(cleanNumber);
+      logger.info(`📱 Requesting CUSTOM pairing code for: ${cleanNumber}`);
+      logger.info(`🔑 Custom code: ${customCode}`);
+      
+      // Request pairing code with custom code
+      const code = await this.sock.requestPairingCode(cleanNumber, customCode);
       
       this.pairingCodeRequested = true;
       
-      logger.info(`✅ Pairing code generated: ${code}`);
+      // Format code as XXXX-XXXX
+      const formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
+      
+      logger.info(`✅ Pairing code generated: ${formattedCode}`);
       
       console.log('\n' + '='.repeat(70));
-      console.log('📱 YOUR PAIRING CODE: ' + code);
+      console.log('📱 YOUR CUSTOM PAIRING CODE: ' + formattedCode);
       console.log('='.repeat(70));
       console.log('⚡ INSTRUCTIONS:');
       console.log('');
-      console.log('1. Open WhatsApp on your phone (number: ' + cleanNumber + ')');
-      console.log('2. Tap Settings (⚙️) → Linked Devices');
-      console.log('3. Tap "Link a Device"');
-      console.log('4. Tap "Link with phone number instead"');
-      console.log('5. Enter this code: ' + code);
+      console.log('1. Open WhatsApp on phone: ' + cleanNumber);
+      console.log('2. Go to: Settings → Linked Devices');
+      console.log('3. Tap: "Link a Device"');
+      console.log('4. Tap: "Link with phone number instead"');
+      console.log('5. Enter this code: ' + formattedCode);
       console.log('');
       console.log('⏰ Code expires in 60 seconds!');
       console.log('='.repeat(70) + '\n');
       
       this.eventEmitter.emit('pairing_code', {
-        code,
-        phoneNumber: cleanNumber
+        code: formattedCode,
+        phoneNumber: cleanNumber,
+        customCode
       });
       
-      return code;
+      return formattedCode;
     } catch (error) {
-      logger.error('❌ Failed to request pairing code:', error);
+      logger.error('❌ Failed to request custom pairing code:', error);
       throw error;
     }
+  }
+  
+  /**
+   * Public method to request pairing code (for API/WebSocket calls)
+   */
+  async requestPairingCode(phoneNumber, customCode = '44444444') {
+    return this.requestCustomPairingCode(phoneNumber, customCode);
   }
   
   getSocket() {
