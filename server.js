@@ -12,9 +12,6 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === '--phone' || args[i] === '-n') {
     config.whatsapp.phoneNumber = args[i + 1];
     i++;
-  } else if (args[i] === '--custom-code' || args[i] === '-c') {
-    config.whatsapp.customPairingCode = args[i + 1];
-    i++;
   } else if (args[i] === '--port') {
     config.websocket.port = parseInt(args[i + 1]);
     i++;
@@ -50,25 +47,8 @@ async function startServer() {
       if (!config.whatsapp.phoneNumber) {
         config.whatsapp.phoneNumber = await new Promise((resolve) => {
           rl.question('Enter phone number (with country code, e.g., 919668154832): ', (answer) => {
-            resolve(answer.replace(/[^\d]/g, ''));
-          });
-        });
-      }
-      
-      // Ask for custom pairing code if not provided
-      if (!config.whatsapp.customPairingCode) {
-        config.whatsapp.customPairingCode = await new Promise((resolve) => {
-          rl.question('Enter custom 8-digit pairing code (or press Enter for default 44444444): ', (answer) => {
             rl.close();
-            const code = answer.trim() || '44444444';
-            
-            // Validate code
-            if (!/^[A-Z0-9]{8}$/i.test(code)) {
-              logger.warn('Invalid code format. Using default: 44444444');
-              resolve('44444444');
-            } else {
-              resolve(code.toUpperCase());
-            }
+            resolve(answer.replace(/[^\d]/g, ''));
           });
         });
       } else {
@@ -80,7 +60,6 @@ async function startServer() {
       console.log('🔧 PAIRING CODE CONFIGURATION');
       console.log('='.repeat(70));
       console.log('📱 Phone Number:', config.whatsapp.phoneNumber);
-      console.log('🔑 Custom Code:', config.whatsapp.customPairingCode);
       console.log('='.repeat(70) + '\n');
     }
     
@@ -110,7 +89,7 @@ process.on('SIGTERM', () => {
 console.log('\n' + '='.repeat(70));
 console.log('🚀 WhatsApp Service Starting...');
 console.log('='.repeat(70));
-console.log('📦 Using nstar-y/bail (Custom Pairing Code Support)');
+console.log('📦 Using @whiskeysockets/baileys (Official Package)');
 console.log('='.repeat(70) + '\n');
 
 // Start the server

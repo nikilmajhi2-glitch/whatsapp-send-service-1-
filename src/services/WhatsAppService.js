@@ -4,7 +4,7 @@ const {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion
-} = require('baileys');
+} = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
 const config = require('../config/config');
@@ -41,25 +41,22 @@ class WhatsAppService {
       
       this.setupEventHandlers(saveCreds);
       
-      // Request custom pairing code if configured
+      // Request standard pairing code if configured
       if (
         config.whatsapp.usePairingCode &&
         config.whatsapp.phoneNumber &&
         !state.creds.registered
       ) {
-        logger.info('⏳ Waiting for connection to request custom pairing code...');
+        logger.info('⏳ Waiting for connection to request pairing code...');
         
         // Wait for connection
         await this.waitForConnection();
         
-        logger.info('✅ Connection ready, requesting custom pairing code...');
+        logger.info('✅ Connection ready, requesting pairing code...');
         
         setTimeout(async () => {
           try {
-            await this.requestCustomPairingCode(
-              config.whatsapp.phoneNumber,
-              config.whatsapp.customPairingCode || '44444444'
-            );
+            await this.requestPairingCode(config.whatsapp.phoneNumber);
           } catch (err) {
             logger.error('Failed to request pairing code:', err);
           }
@@ -96,7 +93,7 @@ class WhatsAppService {
       
       // Suppress QR if using pairing code
       if (qr && config.whatsapp.usePairingCode) {
-        logger.debug('QR code suppressed (using custom pairing code)');
+        logger.debug('QR code suppressed (using pairing code)');
         return;
       }
       
@@ -153,11 +150,10 @@ class WhatsAppService {
   }
   
   /**
-   * Request a CUSTOM pairing code (8-digit alphanumeric)
+   * Request a standard pairing code
    * @param {string} phoneNumber - Phone number with country code (e.g., 919668154832)
-   * @param {string} customCode - Your custom 8-digit code (e.g., "44444444")
    */
-  async requestCustomPairingCode(phoneNumber, customCode = '44444444') {
+  async requestPairingCode(phoneNumber) {
     try {
       if (!phoneNumber) {
         throw new Error('Phone number is required');
@@ -175,16 +171,10 @@ class WhatsAppService {
       // Clean phone number (remove +, spaces, dashes)
       const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
       
-      // Validate custom code (must be 8 characters alphanumeric)
-      if (!/^[A-Z0-9]{8}$/i.test(customCode)) {
-        throw new Error('Custom code must be 8 alphanumeric characters');
-      }
+      logger.info(`📱 Requesting pairing code for: ${cleanNumber}`);
       
-      logger.info(`📱 Requesting CUSTOM pairing code for: ${cleanNumber}`);
-      logger.info(`🔑 Custom code: ${customCode}`);
-      
-      // Request pairing code with custom code
-      const code = await this.sock.requestPairingCode(cleanNumber, customCode);
+      // Request standard pairing code
+      const code = await this.sock.requestPairingCode(cleanNumber);
       
       this.pairingCodeRequested = true;
       
@@ -194,7 +184,7 @@ class WhatsAppService {
       logger.info(`✅ Pairing code generated: ${formattedCode}`);
       
       console.log('\n' + '='.repeat(70));
-      console.log('📱 YOUR CUSTOM PAIRING CODE: ' + formattedCode);
+      console.log('📱 YOUR PAIRING CODE: ' + formattedCode);
       console.log('='.repeat(70));
       console.log('⚡ INSTRUCTIONS:');
       console.log('');
@@ -209,22 +199,14 @@ class WhatsAppService {
       
       this.eventEmitter.emit('pairing_code', {
         code: formattedCode,
-        phoneNumber: cleanNumber,
-        customCode
+        phoneNumber: cleanNumber
       });
       
       return formattedCode;
     } catch (error) {
-      logger.error('❌ Failed to request custom pairing code:', error);
+      logger.error('❌ Failed to request pairing code:', error);
       throw error;
     }
-  }
-  
-  /**
-   * Public method to request pairing code (for API/WebSocket calls)
-   */
-  async requestPairingCode(phoneNumber, customCode = '44444444') {
-    return this.requestCustomPairingCode(phoneNumber, customCode);
   }
   
   getSocket() {
