@@ -1,8 +1,9 @@
+// debug-server.js - Use this to see full error details
+
 const Application = require('./src/app');
 const config = require('./src/config/config');
-const logger = require('./src/utils/logger');
 const readline = require('readline');
-const express = require('express'); // Add this
+const express = require('express');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -31,7 +32,7 @@ app.get('/health', (req, res) => {
 });
 
 app.listen(healthPort, () => {
-  logger.info(`Health check endpoint running on port ${healthPort}`);
+  console.log(`Health check endpoint running on port ${healthPort}`);
 });
 
 async function startServer() {
@@ -51,26 +52,40 @@ async function startServer() {
       });
     }
 
+    console.log('\n=== Starting Application ===');
+    console.log('Config:', JSON.stringify(config, null, 2));
+    console.log('============================\n');
+
     // Initialize application
     const whatsappApp = new Application();
     await whatsappApp.initialize();
 
-    logger.info('Server started successfully');
+    console.log('✅ Server started successfully');
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    console.error('\n❌ DETAILED ERROR:');
+    console.error('Error Name:', error.name);
+    console.error('Error Message:', error.message);
+    console.error('Error Stack:', error.stack);
+    console.error('Error Details:', JSON.stringify(error, null, 2));
     process.exit(1);
   }
 }
 
 // Handle graceful shutdown
 process.on('SIGINT', () => {
-  logger.info('Shutting down gracefully...');
+  console.log('Shutting down gracefully...');
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-  logger.info('Shutting down gracefully...');
+  console.log('Shutting down gracefully...');
   process.exit(0);
+});
+
+// Catch unhandled rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise);
+  console.error('Reason:', reason);
 });
 
 // Start the server
