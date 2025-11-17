@@ -4,7 +4,7 @@ const {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion
-} = require('@whiskeysockets/baileys');
+} = require('@itsukichan/baileys');
 
 const { Boom } = require('@hapi/boom');
 const config = require('../config/config');
@@ -22,7 +22,6 @@ class WhatsAppService {
     try {
       const { state, saveCreds } = await useMultiFileAuthState(config.whatsapp.authDir);
       
-      // Fetch latest baileys version
       const { version } = await fetchLatestBaileysVersion();
       logger.info(`Using Baileys version ${version.join('.')}`);
       
@@ -42,24 +41,35 @@ class WhatsAppService {
       
       this.setupEventHandlers(saveCreds);
       
-      // =======================================
-      // REQUEST PAIRING CODE IMMEDIATELY IF CONFIGURED
-      // =======================================
-      if (
-        config.whatsapp.usePairingCode &&
-        config.whatsapp.phoneNumber &&
-        !state.creds.registered
-      ) {
-        logger.info('Pairing code mode enabled, requesting code...');
-        
-        // Wait a moment for socket to be ready
-        setTimeout(async () => {
-          try {
-            await this.requestPairingCode(config.whatsapp.phoneNumber);
-          } catch (err) {
-            logger.error('Failed to request pairing code:', err);
-          }
-        }, 2000);
+      // Wait for connection then request pairing code
+      if (config.whatsapp.usePairingCode && config.whatsapp.phoneNumber) {
+        if (!state.creds.registered) {
+          logger.info('⏳ Waiting for connection to request pairing code...');
+          
+          // Wait for the connection to be established
+          await new Promise((resolve) => {
+            const checkConnection = setInterval(() => {
+              if (this.sock.ws && this.sock.ws.readyState === 1) {
+                clearInterval(checkConnection);
+                resolve();
+              }
+            }, 100);
+            
+            // Timeout after 10 seconds
+            setTimeout(() => {
+              clearInterval(checkConnection);
+              resolve();
+            }, 10000);
+          });
+          
+          // Small delay to ensure handshake is complete
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          logger.info('✅ Connection established, requesting pairing code...');
+          await this.requestPairingCode(config.whatsapp.phoneNumber);
+        } else {
+          logger.info('Already registered, skipping pairing code request');
+        }
       }
       
       logger.info('WhatsApp service initialized');
@@ -70,95 +80,60 @@ class WhatsAppService {
   }
   
   setupEventHandlers(saveCreds) {
-    
     this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
       
-      // =======================================
-      // SUPPRESS QR CODE IF PAIRING MODE IS ENABLED
-      // =======================================
-      if (qr && !config.whatsapp.usePairingCode) {
-        logger.info('QR code generated');
-        
-        console.log('\n' + '='.repeat(70));
-        console.log('📱  SCAN THIS QR CODE WITH WHATSAPP');
-        console.log('='.repeat(70));
-        console.log('👉 Open WhatsApp → Settings → Linked Devices → Link Device');
-        console.log('='.repeat(70) + '\n');
-        
-        const qrcode = require('qrcode-terminal');
-        qrcode.generate(qr, { small: true });
-        
-        console.log('\n' + '='.repeat(70));
-        console.log('Waiting for scan...');
-        console.log('='.repeat(70) + '\n');
-        
-        this.eventEmitter.emit('qr', qr);
-      } else if (qr && config.whatsapp.usePairingCode) {
-        logger.info('QR generated but suppressed (pairing code mode)');
+      // Suppress QR if using pairing code
+      if (qr && config.whatsapp.usePairingCode) {
+        logger.debug('QR code suppressed (using pairing code mode)');
+        return;
       }
       
-      // =======================================
-      // WHEN CONNECTION CLOSES
-      // =======================================
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const reason = lastDisconnect?.error?.output?.payload?.message;
-        
         const shouldReconnect =
           lastDisconnect?.error instanceof Boom &&
-          statusCode !== DisconnectReason.loggedOut;
+          statusCode !== DisconnectReason.loggedOut &&
+          statusCode !== 401;
         
-        logger.warn('Connection closed', { statusCode, reason, shouldReconnect });
+        logger.warn('Connection closed', { statusCode, shouldReconnect });
         
         this.isConnected = false;
-        this.pairingCodeRequested = false;
-        
         this.eventEmitter.emit('status', { connected: false });
         
         if (shouldReconnect) {
-          const delay = statusCode === 428 ? 30000 : 8000;
-          logger.info(`Reconnecting in ${delay/1000} seconds...`);
-          setTimeout(() => this.initialize(), delay);
+          logger.info('🔄 Reconnecting in 5 seconds...');
+          this.pairingCodeRequested = false;
+          setTimeout(() => this.initialize(), 5000);
         } else {
-          logger.error('❌ Connection closed permanently. Logged out.');
-          
-          if (statusCode === DisconnectReason.loggedOut) {
-            console.log('\n⚠️  You are logged out from WhatsApp.');
-            console.log('Delete auth_info_baileys folder and restart.\n');
-          }
+          logger.error('❌ Connection failed permanently');
+          console.log('\n⚠️  Delete auth_info_baileys folder and try again\n');
+          console.log('Run: rm -rf auth_info_baileys\n');
         }
       }
-      
-      // =======================================
-      // WHEN CONNECTED TO WHATSAPP
-      // =======================================
       else if (connection === 'open') {
-        logger.info('✅ WhatsApp connected successfully');
+        logger.info('✅ WhatsApp connected successfully!');
         this.isConnected = true;
         
         console.log('\n' + '='.repeat(70));
-        console.log('🎉  WHATSAPP CONNECTED SUCCESSFULLY!!');
+        console.log('🎉  WHATSAPP CONNECTED SUCCESSFULLY!');
         console.log('='.repeat(70));
-        console.log('User:', this.sock.user?.name || 'Unknown');
-        console.log('Phone:', this.sock.user?.id?.split(':')[0] || 'Unknown');
+        console.log('📱 User:', this.sock.user?.name || 'Unknown');
+        console.log('📞 Phone:', this.sock.user?.id?.split(':')[0] || 'Unknown');
         console.log('='.repeat(70) + '\n');
         
-        this.eventEmitter.emit('status', { connected: true, user: this.sock.user });
+        this.eventEmitter.emit('status', {
+          connected: true,
+          user: this.sock.user
+        });
       }
-      
-      // =======================================
-      // CONNECTING
-      // =======================================
       else if (connection === 'connecting') {
         console.log('🔄 Connecting to WhatsApp...');
       }
     });
     
-    // Save updated creds
     this.sock.ev.on('creds.update', saveCreds);
     
-    // Log incoming messages
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       logger.debug('Message received', {
         from: messages[0]?.key?.remoteJid,
@@ -167,39 +142,56 @@ class WhatsAppService {
     });
   }
   
-  // =======================================
-  // REQUEST PAIRING CODE (FOR PHONE NUMBER LOGIN)
-  // =======================================
   async requestPairingCode(phoneNumber) {
     try {
-      if (!phoneNumber) throw new Error('Phone number required');
+      if (!phoneNumber) {
+        throw new Error('Phone number is required');
+      }
       
-      // Clean phone number (remove spaces, dashes, etc.)
+      if (!this.sock) {
+        throw new Error('Socket not initialized');
+      }
+      
+      if (this.pairingCodeRequested) {
+        logger.warn('Pairing code already requested, skipping...');
+        return;
+      }
+      
+      // Clean phone number
       const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
       
-      logger.info(`Requesting pairing code for ${cleanNumber}...`);
+      logger.info(`📱 Requesting pairing code for: ${cleanNumber}`);
       
+      // Request pairing code
       const code = await this.sock.requestPairingCode(cleanNumber);
-      logger.info(`Pairing code generated: ${code}`);
       
-      console.log('\n' + '='.repeat(70));
-      console.log('📱 PAIRING CODE:', code);
-      console.log('='.repeat(70));
-      console.log('🔧 Enter this code in WhatsApp:');
-      console.log('1. Open WhatsApp on your phone');
-      console.log('2. Go to Settings → Linked Devices');
-      console.log('3. Tap "Link a Device"');
-      console.log('4. Tap "Link with phone number instead"');
-      console.log('5. Enter the code above');
-      console.log('='.repeat(70) + '\n');
-      
-      this.eventEmitter.emit('pairing_code', { code, phoneNumber: cleanNumber });
       this.pairingCodeRequested = true;
       
+      logger.info(`✅ Pairing code generated: ${code}`);
+      
+      console.log('\n' + '='.repeat(70));
+      console.log('📱 YOUR PAIRING CODE: ' + code);
+      console.log('='.repeat(70));
+      console.log('⚡ INSTRUCTIONS:');
+      console.log('');
+      console.log('1. Open WhatsApp on your phone (number: ' + cleanNumber + ')');
+      console.log('2. Tap Settings (⚙️) → Linked Devices');
+      console.log('3. Tap "Link a Device"');
+      console.log('4. Tap "Link with phone number instead"');
+      console.log('5. Enter this code: ' + code);
+      console.log('');
+      console.log('⏰ Code expires in 60 seconds!');
+      console.log('='.repeat(70) + '\n');
+      
+      this.eventEmitter.emit('pairing_code', {
+        code,
+        phoneNumber: cleanNumber
+      });
+      
       return code;
-    } catch (err) {
-      logger.error('Failed to request pairing code:', err);
-      throw err;
+    } catch (error) {
+      logger.error('❌ Failed to request pairing code:', error);
+      throw error;
     }
   }
   
